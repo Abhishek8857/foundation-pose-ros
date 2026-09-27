@@ -1,0 +1,29 @@
+services:
+  foundation-pose:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: foundation-pose-ros:latest
+    container_name: foundation-pose
+    stdin_open: true
+    tty: true
+    runtime: nvidia
+    network_mode: host
+    pid: host
+    ipc: host
+    privileged: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - PYOPENGL_PLATFORM=egl
+      - DISPLAY=${DISPLAY}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, graphics, compute, utility]
+    volumes:
+      - ./FoundationPose:/root/FoundationPose/:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
