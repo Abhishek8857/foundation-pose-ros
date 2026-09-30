@@ -1,0 +1,11 @@
+# Goal
+sensor_msgs/Image rgb_image
+---
+# Result
+geometry_msgs/PoseStamped pose
+bool success
+string message
+---
+# Feedback
+string stage 
+float32 progress  
