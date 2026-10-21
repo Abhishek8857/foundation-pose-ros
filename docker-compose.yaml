@@ -25,5 +25,5 @@ services:
               count: all
               capabilities: [gpu, graphics, compute, utility]
     volumes:
-      - .:/workspace/:rw
+      - ..:/workspace/:rw
       - /tmp/.X11-unix:/tmp/.X11-unix:rw

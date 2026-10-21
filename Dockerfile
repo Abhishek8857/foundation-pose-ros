@@ -5,7 +5,8 @@ SHELL ["/bin/bash", "-c"]
 
 # Source ROS environments
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
- && echo "source /root/foundation-pose/colcon_ws/install/setup.bash" >> /root/.bashrc
+ && echo "source /root/foundation-pose-ros/colcon_ws/install/setup.bash" >> /root/.bashrc \
+ && echo "source /root/foundation-pose-ros/overlay_ws/install/setup.bash" >> /root/.bashrc
 
 # Foundation Pose dependancies
 RUN apt-get update && apt-get install -y \
@@ -27,6 +28,7 @@ ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,garbage_collection_threshold:0
 ENV CUDA_HOME=/usr/local/cuda-12.4
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64
+ENV PYTHONPATH=/root/foundation-pose-ros/FoundationPose:${PYTHONPATH}
 ENV TORCH_CUDA_ARCH_LIST="8.6;8.9"
 ENV MAX_JOBS=4
 ENV FORCE_CUDA=1
@@ -50,13 +52,20 @@ WORKDIR /root/foundation-pose-ros/FoundationPose/
 
 # Install Requirements 
 RUN python3 -m pip install -r requirements.txt && \
-    python3 -m pip install --upgrade --force-reinstall --no-deps scipy matplotlib opencv-python pyparsing
+    python3 -m pip install --upgrade --force-reinstall --no-deps scipy matplotlib opencv-python pyparsing "warp-lang==1.8.1"
 
 # Copy Files 
 COPY /colcon_ws/src/ /root/foundation-pose-ros/colcon_ws/src/
+COPY /overlay_ws/src/ /root/foundation-pose-ros/overlay_ws/src/
 
 # Change working directory
 WORKDIR /root/foundation-pose-ros/colcon_ws/
+    
+# Source ROS and build packages
+RUN source /opt/ros/humble/setup.bash && colcon build
+
+# Change working directory
+WORKDIR /root/foundation-pose-ros/overlay_ws/
     
 # Source ROS and build packages
 RUN source /opt/ros/humble/setup.bash && colcon build
