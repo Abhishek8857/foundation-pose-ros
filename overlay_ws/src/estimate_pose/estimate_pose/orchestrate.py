@@ -1,6 +1,8 @@
 import rclpy
 from rclpy.node import Node 
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from pose_est_interface.srv import Segment, EstimatePose 
+from geometry_msgs.msg import PoseStamped
 import time 
 
 class OrchestratorNode(Node):
@@ -11,7 +13,12 @@ class OrchestratorNode(Node):
         self.sgmt_client = self.create_client(Segment, '/cnos/segment')
         # Pose Estimation client 
         self.estmt_client = self.create_client(EstimatePose, '/foundation_pose/estimate_pose')
-        
+        pose_qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, 
+                              durability=DurabilityPolicy.TRANSIENT_LOCAL, 
+                              history=HistoryPolicy.KEEP_LAST,
+                              depth=1,
+                              )
+        self.pose_publisher = self.create_publisher(PoseStamped, "/estimated_pose", qos_profile=pose_qos)
         self.get_logger().info("Orchestrator initialized!")
         self.orchestrate()
         
@@ -46,7 +53,7 @@ class OrchestratorNode(Node):
             return 
         
         self.get_logger().info(f"Segmentation succeeded: {sgmt_result.message}")
-                
+                     
         # Estimate Pose 
         self.get_logger().info("Estimating Pose...")
         est_pose_req = EstimatePose.Request()
@@ -68,6 +75,10 @@ class OrchestratorNode(Node):
         
         self.get_logger().info("Pose Estimation Succeeded")
         self.get_logger().info(f"Estimated Pose: {est_pose_result.pose}")
+        
+        self.pose_publisher.publish(est_pose_result.pose)
+        self.get_logger().info("Publishing Pose...")
+        
 
 def main(args=None):
     rclpy.init(args=args)
