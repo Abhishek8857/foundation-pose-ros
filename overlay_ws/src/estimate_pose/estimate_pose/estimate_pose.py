@@ -11,14 +11,14 @@ import rclpy
 from scipy.spatial.transform import Rotation as R
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
-
+from rclpy.time import Time, Duration
 from cv_bridge import CvBridge
 from sensor_msgs.msg import CameraInfo, Image
 from geometry_msgs.msg import PoseStamped
 from pose_est_interface.srv import EstimatePose
 from estimater import FoundationPose, ScorePredictor, PoseRefinePredictor
 from Utils import draw_posed_3d_box, draw_xyz_axis
-
+from tf2_ros import Buffer, TransformListener, TransformException
 
 class FoundationPoseNode(Node):
     def __init__(self):
@@ -29,6 +29,8 @@ class FoundationPoseNode(Node):
         
         self.latest_rgb = None
         self.latest_depth = None
+        self.latest_rgb_stamp = None
+        self.camera_frame = None
         self.K = None
         self._registered = False
         self.latest_vis = None 
@@ -42,6 +44,12 @@ class FoundationPoseNode(Node):
         self.est_refine_iter = self.declare_parameter('est_refine_iter', 5).value
         self.track_refine_iter = self.declare_parameter('track_refine_iter', 5).value
         self.show_window = self.declare_parameter('show_window', True).value
+        self.target_frame = self.declare_parameter('target_frame', 'base_link').value
+        self.camera_frame = self.declare_parameter('camera_frame', 'camera_link').value
+        self.tf_at_image_stamp = self.declare_parameter('tf_at_image_stamp', True).value
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
         
         # Mesh 
         self.get_logger().info(f"Loading Mesh: {self.mesh_path}")
@@ -89,11 +97,20 @@ class FoundationPoseNode(Node):
         self.srv = self.create_service(EstimatePose, '/foundation_pose/estimate_pose', self.estimate_pose)
         self.get_logger().info("Service /foundation_pose/estimate_pose/ ready")
         
+    @staticmethod
+    def transform_to_matrix(t):
+        T = np.eye(4)
+        q = t.transform.rotation
+        p = t.transform.translation
+        T[:3, :3] = R.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+        T[:3, 3] = [p.x, p.y, p.z]
+        return T
     
     def rgb_callback(self, msg):
         with self.lock:
             self.latest_rgb = self.bridge.imgmsg_to_cv2(msg, desired_encoding='rgb8')
-    
+            self.latest_rgb_stamp = msg.header.stamp
+            
     def depth_callback(self, msg):
         with self.lock:
             depth = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
@@ -149,6 +166,8 @@ class FoundationPoseNode(Node):
             rgb = self.latest_rgb.copy()
             depth = self.latest_depth.copy()
             K = self.K.copy()
+            rgb_stamp = self.latest_rgb_stamp
+            cam_frame = self.camera_frame
             
         mask = self.bridge.imgmsg_to_cv2(request.mask, desired_encoding='mono8')
         mask_bool = mask.astype(bool)
@@ -174,23 +193,39 @@ class FoundationPoseNode(Node):
         
         self.visualize(rgb, K, pose)
         
-        quat = R.from_matrix(pose[:3, :3]).as_quat()         
+        try:
+            stamp = Time.from_msg(rgb_stamp) if self.tf_at_image_stamp else Time()
+            tf = self.tf_buffer.lookup_transform(
+                self.target_frame, cam_frame, stamp, timeout=Duration(seconds=1.0)
+            )
+        except TransformException as e:
+            self.get_logger().error(
+                f"TF {cam_frame} -> {self.target_frame} failed: {e}"
+            )
+            response.success = False
+            response.message = f"TF lookup failed: {e}"
+            return response
+        
+        pose_base_link = self.transform_to_matrix(tf) @ pose
+
+        # for downward orientation of robot arm 
+        quat = R.from_euler('x', 180, degrees=True).as_quat()  
+                                            
         pose_msg = PoseStamped()
-        pose_msg.header.stamp = self.get_clock().now().to_msg()
-        pose_msg.header.frame_id = 'camera_frame'
-        pose_msg.pose.position.x = float(pose[0, 3])
-        pose_msg.pose.position.y = float(pose[1, 3])
-        pose_msg.pose.position.z = float(pose[2, 3])
-        pose_msg.pose.orientation.x = quat[0]
-        pose_msg.pose.orientation.y = quat[1]
-        pose_msg.pose.orientation.z = quat[2]
-        pose_msg.pose.orientation.w = quat[3]
+        pose_msg.header.stamp = rgb_stamp
+        pose_msg.header.frame_id = self.target_frame
+        pose_msg.pose.position.x = float(pose_base_link[0, 3])
+        pose_msg.pose.position.y = float(pose_base_link[1, 3])
+        pose_msg.pose.position.z = float(pose_base_link[2, 3])
+        pose_msg.pose.orientation.x = float(quat[0])
+        pose_msg.pose.orientation.y = float(quat[1])
+        pose_msg.pose.orientation.z = float(quat[2])
+        pose_msg.pose.orientation.w = float(quat[3])
 
         response.pose = pose_msg
         response.success = True
         response.message = "OK"
         return response
-
     
 def main():
     rclpy.init()
